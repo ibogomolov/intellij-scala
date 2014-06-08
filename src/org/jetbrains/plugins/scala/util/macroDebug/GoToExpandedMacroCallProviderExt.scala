@@ -3,7 +3,7 @@ package util.macroDebug
 
 import com.intellij.codeInsight.daemon._
 import java.util
-import com.intellij.psi.{PsiDocumentManager, NavigatablePsiElement, PsiElement}
+import com.intellij.psi._
 import lang.psi.api.ScalaFile
 import org.jetbrains.plugins.scala.icons.Icons
 import com.intellij.codeHighlighting.Pass
@@ -21,6 +21,9 @@ import com.intellij.openapi.fileEditor.FileEditorManager
 import com.intellij.openapi.editor.Editor
 import com.intellij.psi.util.PsiTreeUtil
 import org.jetbrains.plugins.scala.lang.psi.api.expr.{ScExpression, MethodInvocation}
+import com.intellij.psi.codeStyle.CodeStyleManager
+import scala.Some
+import org.jetbrains.plugins.scala.lang.psi.impl.ScalaPsiElementFactory
 
 /**
  * User: Dmitry Naydanov
@@ -77,22 +80,35 @@ class GoToExpandedMacroCallProviderExt extends LineMarkerProvider {
           },
           new GutterIconNavigationHandler[PsiElement] {
             def navigate(mouseEvent: MouseEvent, elt: PsiElement) {
-              println("* * * elt: " + elt)
+              //              println("* * * elt: " + elt)
               val project = elt.getProject
               val editor = FileEditorManager.getInstance(project).getSelectedTextEditor
               val macrosheet: Editor = MacrosheetEditorPrinter.createMacrosheetViewer(editor, null)
               val macrosheetFile = PsiDocumentManager.getInstance(project).getPsiFile(macrosheet.getDocument)
 
               var macroCall = macrosheetFile.findElementAt(elt.getTextOffset)
-              println("* macroCall: " + macroCall)
+              //              println("* macroCall: " + macroCall)
               while (macroCall!= null && !ScalaMacroDebuggingUtil.isMacroCall(macroCall)) {
                 macroCall = macroCall.getParent
-                println("* macroCall: " + macroCall)
+                //                println("* macroCall: " + macroCall)
               }
               if (macroCall != null) {
                 extensions.inWriteAction {
-                  println("* deleted: " + macroCall)
+                  val macroExpansion =
+                    """
+                      |val eval$1: String = "world"
+                      |print("hello ")
+                      |print(eval$1)
+                      |print("!")
+                      |()
+                    """.stripMargin
+                  val expansion = ScalaPsiElementFactory.createBlockExpressionWithoutBracesFromText(s"{$macroExpansion}", PsiManager.getInstance(project))
+                  var statement = macroCall.getParent.addAfter(expansion, macroCall)
                   macroCall.delete()
+                  statement = CodeStyleManager.getInstance(project).reformat(statement)
+
+                  // TODO
+                  MacrosheetEditorPrinter.newWorksheetUiFor(editor, macrosheetFile.getVirtualFile).processLine(macroExpansion)
                 }
               }
             }
