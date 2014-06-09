@@ -77,38 +77,13 @@ class MacrosheetFileHook(private val project: Project) extends ProjectComponent{
       document.addDocumentListener(new MacrosheetSourceAutocopy(document))
 
       MacrosheetFileHook.this.initActions(file,true)
-      //      loadEvaluationResult(source,file)
     }
 
     override def selectionChanged(event:FileEditorManagerEvent) {}
 
-    override def fileClosed(source:FileEditorManager,file:VirtualFile) {}
-
-    private def loadEvaluationResult(source:FileEditorManager,file:VirtualFile) {
-      source getSelectedEditor file match{
-        case txt:TextEditor=>txt.getEditor match{
-          case ext:EditorEx=>
-
-            PsiDocumentManager getInstance project getPsiFile ext.getDocument match{
-              case scalaFile:ScalaFile=>MacrosheetEditorPrinter.loadWorksheetEvaluation(scalaFile)foreach{
-                case result if!result.isEmpty=>
-                  val viewer=MacrosheetEditorPrinter.createMacrosheetViewer(ext,file)
-                  val document=viewer.getDocument
-
-                  extensions.inWriteAction{
-                    document setText result
-                    PsiDocumentManager.getInstance(project).commitDocument(document)
-                  }
-                case _=>
-              }
-              case _=>
-            }
-          case _=>
-        }
-        case _=>
-      }
+    override def fileClosed(source:FileEditorManager,file:VirtualFile) {
+      ScalaMacroDebuggingUtil.macrosToExpand.clear()
     }
-
   }
 
   private class MacrosheetSourceAutocopy(document: Document) extends DocumentAdapter {

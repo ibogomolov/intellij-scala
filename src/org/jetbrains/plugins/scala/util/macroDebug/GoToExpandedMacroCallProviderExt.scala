@@ -30,7 +30,6 @@ import org.jetbrains.plugins.scala.lang.psi.impl.ScalaPsiElementFactory
  * Date: 11/7/12
  */
 class GoToExpandedMacroCallProviderExt extends LineMarkerProvider {
-  private val errorMessage = "Synthetic source isn't available"
 
   def getLineMarkerInfo(element: PsiElement): LineMarkerInfo[_ <: PsiElement] = null
 
@@ -46,38 +45,19 @@ class GoToExpandedMacroCallProviderExt extends LineMarkerProvider {
       case _ => None
     }
 
-    // here
     import scala.collection.JavaConversions._
     val macrosFound = elements filter ScalaMacroDebuggingUtil.isMacroCall
     if (macrosFound.length == 0) return
 
-    val nullOffsets: GenIterable[(Int, Int, Int)]  = Stream.iterate((-1,-1,-1))((t) => (t._1,t._2,t._3))
-    val offsets: GenIterable[(Int, Int, Int)] = synFile map (ScalaMacroDebuggingUtil getOffsets _) map {
-      case Some(o) if o.length == macrosFound.length => o
-      case None => nullOffsets
-    } getOrElse nullOffsets
-
-
-    (0 /: (macrosFound zip offsets)) {
-      case (offsetsSoFar, (macroCall, (length, start, end))) =>
-        val off = if (length <= 0) {
-          -1
-        } else {
-          start + offsetsSoFar - (if (ScalaMacroDebuggingUtil.needFixCarriageReturn) synFile map {
-            PsiDocumentManager getInstance file.getProject getDocument _ getLineNumber start
-          } getOrElse 0 else 0)
-        }
-
+    macrosFound foreach {
+      case macroCall =>
         val markerInfo = new RelatedItemLineMarkerInfo[PsiElement](macroCall, macroCall.getTextRange, Icons.NO_SCALA_SDK,
           Pass.UPDATE_OVERRIDEN_MARKERS, new Function[PsiElement, String] {
             def fun(param: PsiElement): String = {
-
-              if (off <= 0) {
-                errorMessage
+              if (!ScalaMacroDebuggingUtil.macrosToExpand.contains(macroCall)) {
+                "Expand macro"
               } else {
-                synFile map (ScalaMacroDebuggingUtil loadCode _) map {
-                  file => PsiDocumentManager getInstance file.getProject getDocument file
-                } map ( _ getText new TextRange(off, off + length) ) getOrElse errorMessage
+                "Collapse macro"
               }
             }
           },
@@ -94,8 +74,6 @@ class GoToExpandedMacroCallProviderExt extends LineMarkerProvider {
 
         result add markerInfo
         ScalaMacroDebuggingUtil.allMacroCalls.add(macroCall)
-
-        offsetsSoFar + length - (end - start)
     }
   }
 }

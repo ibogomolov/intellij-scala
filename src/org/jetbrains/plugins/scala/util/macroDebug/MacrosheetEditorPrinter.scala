@@ -96,7 +96,7 @@ object MacrosheetEditorPrinter {
       }
     )
 
-  def createMacrosheetViewer(editor: Editor, virtualFile: VirtualFile, modelSync: Boolean = true): Editor = {
+  def createMacrosheetViewer(editor: Editor, virtualFile: VirtualFile, modelSync: Boolean = false): Editor = {
     val editorComponent = editor.getComponent
     val project = editor.getProject
 
