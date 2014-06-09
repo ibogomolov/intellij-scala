@@ -2,7 +2,7 @@ package org.jetbrains.plugins.scala
 package util.macroDebug
 
 import com.intellij.openapi.vfs.newvfs.FileAttribute
-import com.intellij.psi.{PsiElement, PsiFileFactory, PsiFile}
+import com.intellij.psi._
 import com.intellij.openapi.vfs.VfsUtil
 import java.io.File
 import collection.mutable
@@ -12,6 +12,14 @@ import com.intellij.testFramework.LightVirtualFile
 import lang.psi.api.expr.{ScReferenceExpression, MethodInvocation}
 import lang.psi.api.statements.ScMacroDefinition
 import com.intellij.openapi.util.SystemInfo
+import com.intellij.openapi.editor.{Document, Editor}
+import com.intellij.openapi.project.Project
+import com.intellij.openapi.fileEditor.FileEditorManager
+import org.jetbrains.plugins.scala.lang.psi.impl.ScalaPsiElementFactory
+import scala.Some
+import com.intellij.psi.codeStyle.CodeStyleManager
+import com.intellij.openapi.application.{ApplicationManager, Application}
+import com.intellij.openapi.command.WriteCommandAction
 
 /**
  * User: Dmitry Naydanov
@@ -19,11 +27,11 @@ import com.intellij.openapi.util.SystemInfo
  */
 object ScalaMacroDebuggingUtil {
   private[this] val MACRO_DEBUG_ENABLE_PROPERTY = "scala.macro.debug.enabled"
-  
+
   val MACRO_SIGN_PREFIX = "<[[macro:" //=\
   val needFixCarriageReturn = SystemInfo.isWindows
   val isEnabled = System.getProperty(MACRO_DEBUG_ENABLE_PROPERTY) != null
-  
+
   private[this] val SOURCE_FILE_NAME = new FileAttribute("PreimageFileName", 1, false)
   private[this] val SYNTHETIC_SOURCE_ATTRIBUTE = new FileAttribute("SyntheticMacroCode", 1, false)
   private[this] val SOURCE_CACHE = mutable.HashMap[String, PsiFile]()
@@ -32,23 +40,26 @@ object ScalaMacroDebuggingUtil {
   private[this] val MARKERS_CACHE = mutable.HashMap[String, Int]()
   private[this] val PREIMAGE_CACHE = mutable.HashMap[PsiFile, PsiFile]()
 
+  val macrosToExpand = new mutable.HashSet[PsiElement]()
+  val allMacroCalls = new mutable.HashSet[PsiElement]()
+
   def saveCode(fileName: String, code: java.util.ArrayList[String]) {
     import scala.collection.JavaConversions._
 
-    if (!isEnabled) return 
+    if (!isEnabled) return
     val file = VfsUtil.findFileByIoFile(new File(fileName stripPrefix MACRO_SIGN_PREFIX), true)
 
     val dataStream = SYNTHETIC_SOURCE_ATTRIBUTE writeAttribute file
     code foreach (dataStream writeUTF _.stripPrefix(MACRO_SIGN_PREFIX))
     dataStream flush()
     dataStream close()
-    
+
     UPDATE_QUEUE += file.getCanonicalPath
   }
 
   def loadCode(file: PsiFile, force: Boolean = false): PsiFile = {
     if (!isEnabled || file.getVirtualFile.isInstanceOf[LightVirtualFile]) return null
-    
+
     val canonicalPath = file.getVirtualFile.getCanonicalPath
 
     def createFile(): PsiFile = {
@@ -80,42 +91,42 @@ object ScalaMacroDebuggingUtil {
       dataStream.close()
 
       val synFile = PsiFileFactory.getInstance(file.getManager.getProject).
-        createFileFromText("expanded_" + file.getName,
-        ScalaFileType.SCALA_FILE_TYPE, linesRed.toString(), file.getModificationStamp, true).asInstanceOf[ScalaFile]
+              createFileFromText("expanded_" + file.getName,
+                ScalaFileType.SCALA_FILE_TYPE, linesRed.toString(), file.getModificationStamp, true).asInstanceOf[ScalaFile]
 
       SOURCE_CACHE += (canonicalPath -> synFile)
       PREIMAGE_CACHE += (synFile -> file)
 
       synFile
     }
-    
+
     if (force || UPDATE_QUEUE.remove(canonicalPath)) createFile() else SOURCE_CACHE get canonicalPath getOrElse createFile()
   }
-  
-  def readPreimageName(file: PsiFile): Option[String] = 
+
+  def readPreimageName(file: PsiFile): Option[String] =
     Option(SOURCE_FILE_NAME readAttributeBytes file.getVirtualFile) map (new String(_))
-  
+
   def getPreimageFile(file: PsiFile) = PREIMAGE_CACHE get file
 
   def isLoaded(file: PsiFile) = SOURCE_CACHE get file.getVirtualFile.getCanonicalPath match {
     case Some(_) => true
     case _ => false
   }
-  
-  def tryToLoad(file: PsiFile) = !file.getVirtualFile.isInstanceOf[LightVirtualFile] && 
-    (isLoaded(file) || loadCode(file, false) != null)
+
+  def tryToLoad(file: PsiFile) = !file.getVirtualFile.isInstanceOf[LightVirtualFile] &&
+          (isLoaded(file) || loadCode(file, false) != null)
 
   def getOffsets(file: PsiFile) = SYNTHETIC_OFFSETS_MAP get file.getVirtualFile.getCanonicalPath
-  
+
   def getOffsetsCount(file: PsiFile) = SYNTHETIC_OFFSETS_MAP get file.getVirtualFile.getCanonicalPath match {
     case Some(offsets) => offsets.length
-    case _ => 0 
+    case _ => 0
   }
-  
+
   def checkMarkers(fileName: String, markersCount: Int) = MARKERS_CACHE get fileName match {
     case Some(oldCount) => if (oldCount == markersCount) { false } else {
       MARKERS_CACHE += (fileName -> markersCount); true
-    } 
+    }
     case None => MARKERS_CACHE += (fileName -> markersCount); true
   }
 
@@ -129,4 +140,47 @@ object ScalaMacroDebuggingUtil {
     }
     case _ => false
   }
+
+  def copyTextBetweenEditors(from: Editor, to: Editor, project: Project) {
+    extensions.inWriteAction {
+      val toDoc: Document = to.getDocument
+      toDoc.setText(from.getDocument.getText)
+      PsiDocumentManager.getInstance(project).commitDocument(toDoc)
+    }
+  }
+
+  def expandMacros(project: Project) {
+    val sourceEditor = FileEditorManager.getInstance(project).getSelectedTextEditor
+    val macroEditor = MacrosheetEditorPrinter.createMacrosheetViewer(sourceEditor, null)
+    val macrosheetFile = PsiDocumentManager.getInstance(project).getPsiFile(macroEditor.getDocument)
+
+    copyTextBetweenEditors(sourceEditor, macroEditor, project)
+
+    for (elt <- macrosToExpand.toList.sortWith((a,b) => a.getTextOffset > b.getTextOffset)) {
+      var macroCall = macrosheetFile.findElementAt(elt.getTextOffset)
+      while (macroCall != null && !ScalaMacroDebuggingUtil.isMacroCall(macroCall)) {
+        macroCall = macroCall.getParent
+      }
+      if (macroCall != null) {
+        //        extensions.inWriteAction {
+        WriteCommandAction.runWriteCommandAction(project, new Runnable {
+          override def run() {
+            val macroExpansion =
+              """
+                |val eval$1: String = "world"
+                |print("hello ")
+                |print(eval$1)
+                |print("!")
+                |()
+              """.stripMargin
+            val expansion = ScalaPsiElementFactory.createBlockExpressionWithoutBracesFromText(s"{$macroExpansion}", PsiManager.getInstance(project))
+            var statement = macroCall.getParent.addAfter(expansion, macroCall)
+            macroCall.delete()
+            statement = CodeStyleManager.getInstance(project).reformat(statement)
+          }
+        })
+      }
+    }
+  }
+
 }

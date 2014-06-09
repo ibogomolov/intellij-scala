@@ -52,6 +52,7 @@ class CleanMacrosheetAction() extends AnAction with TopComponentAction {
         parent.remove(splitPane)
         parent.add(editor.getComponent, BorderLayout.CENTER)
         editor.getSettings.setFoldingOutlineShown(true)
+        ScalaMacroDebuggingUtil.macrosToExpand.clear()
       }
     }
   }

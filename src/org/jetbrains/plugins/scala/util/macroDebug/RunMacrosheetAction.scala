@@ -19,11 +19,10 @@ import com.intellij.psi.{PsiFileFactory, PsiDocumentManager, PsiFile}
 import com.intellij.execution.ui.RunContentDescriptor
 import com.intellij.execution.impl.DefaultJavaProgramRunner
 import com.intellij.openapi.application.{ModalityState, ApplicationManager}
-import com.intellij.openapi.editor.{Document, EditorFactory, Editor}
+import com.intellij.openapi.editor.{EditorFactory, Editor}
 import com.intellij.lang.{StdLanguages, Language}
-import javax.swing.DefaultBoundedRangeModel
-import com.intellij.openapi.editor.impl.EditorImpl
 import org.jetbrains.plugins.scala.worksheet.actions.TopComponentAction
+import com.intellij.openapi.command.WriteCommandAction
 
 /**
  * @author Ksenia.Sautina
@@ -62,22 +61,9 @@ class RunMacrosheetAction extends AnAction with TopComponentAction {
           }, ModalityState.any())
         }
 
-        extensions.inWriteAction {
-          val worksheetDocument: Document = viewer.getDocument
-          worksheetDocument.setText(editor.getDocument.getText)
-          PsiDocumentManager.getInstance(e.getProject).commitDocument(worksheetDocument)
-
-          (editor, viewer) match {
-            case (editorEx: EditorImpl, viewerEx: EditorImpl) =>
-              val commonModel = editorEx.getScrollPane.getVerticalScrollBar.getModel
-              viewerEx.getScrollPane.getVerticalScrollBar.setModel(
-                new DefaultBoundedRangeModel(
-                  commonModel.getValue, commonModel.getExtent, commonModel.getMinimum, commonModel.getMaximum
-                )
-              )
-            case _ =>
-          }
-        }
+        ScalaMacroDebuggingUtil.macrosToExpand.clear()
+        ScalaMacroDebuggingUtil.allMacroCalls.foreach(ScalaMacroDebuggingUtil.macrosToExpand.add(_))
+        ScalaMacroDebuggingUtil.expandMacros(project)
 
       case _ =>
     }

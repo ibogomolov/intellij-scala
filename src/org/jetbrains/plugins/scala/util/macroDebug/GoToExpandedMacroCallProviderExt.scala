@@ -35,6 +35,8 @@ class GoToExpandedMacroCallProviderExt extends LineMarkerProvider {
   def getLineMarkerInfo(element: PsiElement): LineMarkerInfo[_ <: PsiElement] = null
 
   def collectSlowLineMarkers(elements: util.List[PsiElement], result: util.Collection[LineMarkerInfo[_ <: PsiElement]]) {
+    ScalaMacroDebuggingUtil.allMacroCalls.clear()
+
     if (!ScalaMacroDebuggingUtil.isEnabled || elements.isEmpty) return
     val first = elements get 0
     val file = first.getContainingFile
@@ -44,6 +46,7 @@ class GoToExpandedMacroCallProviderExt extends LineMarkerProvider {
       case _ => None
     }
 
+    // here
     import scala.collection.JavaConversions._
     val macrosFound = elements filter ScalaMacroDebuggingUtil.isMacroCall
     if (macrosFound.length == 0) return
@@ -80,41 +83,17 @@ class GoToExpandedMacroCallProviderExt extends LineMarkerProvider {
           },
           new GutterIconNavigationHandler[PsiElement] {
             def navigate(mouseEvent: MouseEvent, elt: PsiElement) {
-              //              println("* * * elt: " + elt)
-              val project = elt.getProject
-              val editor = FileEditorManager.getInstance(project).getSelectedTextEditor
-              val macrosheet: Editor = MacrosheetEditorPrinter.createMacrosheetViewer(editor, null)
-              val macrosheetFile = PsiDocumentManager.getInstance(project).getPsiFile(macrosheet.getDocument)
-
-              var macroCall = macrosheetFile.findElementAt(elt.getTextOffset)
-              //              println("* macroCall: " + macroCall)
-              while (macroCall!= null && !ScalaMacroDebuggingUtil.isMacroCall(macroCall)) {
-                macroCall = macroCall.getParent
-                //                println("* macroCall: " + macroCall)
+              if (ScalaMacroDebuggingUtil.macrosToExpand.contains(elt)) {
+                ScalaMacroDebuggingUtil.macrosToExpand.remove(elt)
+              } else {
+                ScalaMacroDebuggingUtil.macrosToExpand.add(elt)
               }
-              if (macroCall != null) {
-                extensions.inWriteAction {
-                  val macroExpansion =
-                    """
-                      |val eval$1: String = "world"
-                      |print("hello ")
-                      |print(eval$1)
-                      |print("!")
-                      |()
-                    """.stripMargin
-                  val expansion = ScalaPsiElementFactory.createBlockExpressionWithoutBracesFromText(s"{$macroExpansion}", PsiManager.getInstance(project))
-                  var statement = macroCall.getParent.addAfter(expansion, macroCall)
-                  macroCall.delete()
-                  statement = CodeStyleManager.getInstance(project).reformat(statement)
-
-                  // TODO
-                  MacrosheetEditorPrinter.newWorksheetUiFor(editor, macrosheetFile.getVirtualFile).processLine(macroExpansion)
-                }
-              }
+              ScalaMacroDebuggingUtil.expandMacros(elt.getProject)
             }
           }, GutterIconRenderer.Alignment.RIGHT, util.Arrays.asList[GotoRelatedItem]())
 
         result add markerInfo
+        ScalaMacroDebuggingUtil.allMacroCalls.add(macroCall)
 
         offsetsSoFar + length - (end - start)
     }
